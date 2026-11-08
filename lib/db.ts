@@ -51,6 +51,11 @@ function pool(): pg.Pool {
       max: 3,
       ssl: local ? false : { rejectUnauthorized: false },
     });
+    // Alle Vouchy-Tabellen liegen im eigenen Schema "vouchy" – so gibt es keine
+    // Überschneidung mit Tabellen, die schon in der Datenbank existieren.
+    globalForPg.vouchyPool.on("connect", (client) => {
+      client.query("set search_path to vouchy, public").catch(() => {});
+    });
   }
   return globalForPg.vouchyPool;
 }
@@ -100,6 +105,8 @@ export async function tx<T>(fn: (q: <R = Record<string, unknown>>(text: string, 
 const SCHEMA = `
 begin;
 select pg_advisory_xact_lock(771234);
+create schema if not exists vouchy;
+set local search_path to vouchy, public;
 create table if not exists users (
   id uuid primary key default gen_random_uuid(),
   email text not null unique,
