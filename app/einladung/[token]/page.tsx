@@ -1,14 +1,19 @@
 import Link from "next/link";
 import { Mascot } from "@/components/mascot";
-import { supabaseServer } from "@/lib/supabase/server";
+import { currentUser } from "@/lib/auth";
+import { one } from "@/lib/db";
 import { JoinButton } from "./join-button";
 
 export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const supabase = await supabaseServer();
-  const [{ data: info }, { data: { user } }] = await Promise.all([
-    supabase.rpc("invite_info", { p_token: token }).maybeSingle<{ box_name: string; box_emoji: string; inviter: string | null; valid: boolean }>(),
-    supabase.auth.getUser(),
+  const [info, user] = await Promise.all([
+    one<{ box_name: string; box_emoji: string; inviter: string | null; valid: boolean }>(
+      `select b.name as box_name, b.emoji as box_emoji, u.display_name as inviter, i.expires_at > now() as valid
+         from box_invites i join boxes b on b.id = i.box_id left join users u on u.id = i.created_by
+        where i.token = $1`,
+      [token]
+    ),
+    currentUser(),
   ]);
 
   return (

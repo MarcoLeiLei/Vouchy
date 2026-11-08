@@ -2,9 +2,8 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Copy, Share2 } from "lucide-react";
-import { supabaseBrowser } from "@/lib/supabase/client";
 import { REMINDER_OPTIONS } from "@/lib/vouchers";
-import { createInvite, leaveBox, removeMember, switchBox, updateProfile } from "./actions";
+import { createInvite, deletePushSubscription, leaveBox, removeMember, savePushSubscription, switchBox, updateProfile } from "@/lib/actions";
 
 export function NameField({ initial }: { initial: string }) {
   const [name, setName] = useState(initial);
@@ -185,7 +184,6 @@ export function NotificationSettings({
     setBusy(true);
     setMsg(null);
     try {
-      if (!vapidKey) throw new Error("Push ist auf dem Server noch nicht eingerichtet (VAPID-Schlüssel fehlen).");
       const perm = await Notification.requestPermission();
       if (perm !== "granted") {
         setState(perm === "denied" ? "denied" : "off");
@@ -195,15 +193,7 @@ export function NotificationSettings({
       await navigator.serviceWorker.ready;
       const sub = (await reg.pushManager.getSubscription()) ?? (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(vapidKey) }));
       const json = sub.toJSON() as { endpoint: string; keys: { p256dh: string; auth: string } };
-      const supabase = supabaseBrowser();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      const { error } = await supabase
-        .from("push_subscriptions")
-        .upsert({ user_id: user!.id, endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth, user_agent: navigator.userAgent.slice(0, 200) }, { onConflict: "endpoint" });
-      if (error) throw new Error(error.message);
-      await updateProfile({ notify_push: true });
+      await savePushSubscription({ endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth });
       setState("on");
       setMsg("Push ist an. Schick dir zum Ausprobieren eine Test-Nachricht.");
     } catch (e) {
@@ -218,7 +208,7 @@ export function NotificationSettings({
     const reg = await navigator.serviceWorker.getRegistration();
     const sub = await reg?.pushManager.getSubscription();
     if (sub) {
-      await supabaseBrowser().from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+      await deletePushSubscription(sub.endpoint);
       await sub.unsubscribe();
     }
     await updateProfile({ notify_push: false });
@@ -270,7 +260,7 @@ export function NotificationSettings({
           <p className="text-sm text-ink-soft">{emailAvailable ? "Erinnerung zusätzlich per Mail" : "E-Mail-Versand ist noch nicht eingerichtet"}</p>
         </div>
         <Toggle
-          on={email}
+          on={email && emailAvailable}
           disabled={!emailAvailable}
           onChange={async (v) => {
             setEmail(v);

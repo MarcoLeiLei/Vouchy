@@ -23,7 +23,7 @@ export type Voucher = {
   phone: string | null;
   conditions: string | null;
   notes: string | null;
-  photo_path: string | null;
+  has_photo: boolean;
   status: VoucherStatus;
   redeemed_at: string | null;
   reminder_days: number[];
@@ -53,7 +53,7 @@ export type Box = {
 
 export type Profile = {
   id: string;
-  email: string | null;
+  email: string;
   display_name: string | null;
   notify_push: boolean;
   notify_email: boolean;

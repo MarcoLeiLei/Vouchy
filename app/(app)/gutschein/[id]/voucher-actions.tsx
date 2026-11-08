@@ -5,7 +5,7 @@ import Link from "next/link";
 import confetti from "canvas-confetti";
 import QRCode from "qrcode";
 import { CalendarPlus, Heart, Pencil, ScanLine, Trash2, Undo2, X } from "lucide-react";
-import { supabaseBrowser } from "@/lib/supabase/client";
+import { deleteVoucher, markThanked, redeemVoucher, reopenVoucher } from "@/lib/actions";
 import { effectiveStatus, money, openValue, thankYouText } from "@/lib/vouchers";
 import type { Voucher } from "@/lib/types";
 import { Mascot } from "@/components/mascot";
@@ -23,10 +23,10 @@ export function VoucherActions({ voucher, senderName }: { voucher: Voucher; send
     setBusy(true);
     setError(null);
     const before = openValue(voucher);
-    const { error } = await supabaseBrowser().rpc("redeem_voucher", { p_voucher: voucher.id, p_amount: amount });
+    const { error } = await redeemVoucher(voucher.id, amount);
     setBusy(false);
     if (error) {
-      setError("Einlösen hat nicht geklappt: " + error.message);
+      setError(error);
       return;
     }
     setCelebrated(amount ?? before);
@@ -37,41 +37,29 @@ export function VoucherActions({ voucher, senderName }: { voucher: Voucher; send
 
   async function reopen() {
     setBusy(true);
-    await supabaseBrowser().rpc("reopen_voucher", { p_voucher: voucher.id });
+    await reopenVoucher(voucher.id);
     setBusy(false);
     router.refresh();
   }
 
   async function thank() {
     const text = thankYouText(voucher, senderName);
-    const supabase = supabaseBrowser();
-    if (!voucher.thanked_at) {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      await Promise.all([
-        supabase.from("voucher_events").insert({ voucher_id: voucher.id, box_id: voucher.box_id, user_id: user?.id, type: "thanked" }),
-        supabase.from("vouchers").update({ thanked_at: new Date().toISOString() }).eq("id", voucher.id),
-      ]);
-    }
+    // Teilen zuerst aufrufen: iOS erlaubt das nur direkt nach dem Antippen
     if (navigator.share) {
-      try {
-        await navigator.share({ text });
-      } catch {}
+      navigator.share({ text }).catch(() => {});
     } else {
       window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
     }
+    if (!voucher.thanked_at) await markThanked(voucher.id);
     router.refresh();
   }
 
   async function remove() {
     setBusy(true);
-    const supabase = supabaseBrowser();
-    if (voucher.photo_path) await supabase.storage.from("voucher-photos").remove([voucher.photo_path]);
-    const { error } = await supabase.from("vouchers").delete().eq("id", voucher.id);
+    const { error } = await deleteVoucher(voucher.id);
     setBusy(false);
     if (error) {
-      setError("Löschen hat nicht geklappt: " + error.message);
+      setError(error);
       return;
     }
     router.push("/");

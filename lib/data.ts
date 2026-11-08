@@ -1,37 +1,36 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
-import { supabaseServer } from "./supabase/server";
-import type { Box, Profile, Voucher, VoucherEvent } from "./types";
+import { requireUser } from "./auth";
+import { one, query } from "./db";
+import type { Box, Voucher, VoucherEvent } from "./types";
 
 export const BOX_COOKIE = "vouchy_box";
 
 export async function getContext() {
-  const supabase = await supabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const [{ data: profile }, { data: boxes }] = await Promise.all([
-    supabase.from("profiles").select("*").eq("id", user.id).single<Profile>(),
-    supabase.from("boxes").select("*").order("created_at").returns<Box[]>(),
-  ]);
-
-  const cookieStore = await cookies();
-  const wanted = cookieStore.get(BOX_COOKIE)?.value;
-  const list = boxes ?? [];
-  const activeBox = list.find((b) => b.id === wanted) ?? list.find((b) => b.owner_id === user.id) ?? list[0] ?? null;
-
-  return { supabase, user, profile: profile ?? null, boxes: list, activeBox };
+  const user = await requireUser();
+  const boxes = await query<Box>(
+    "select b.* from boxes b join box_members m on m.box_id = b.id where m.user_id = $1 order by b.created_at",
+    [user.id]
+  );
+  const wanted = (await cookies()).get(BOX_COOKIE)?.value;
+  const activeBox = boxes.find((b) => b.id === wanted) ?? boxes.find((b) => b.owner_id === user.id) ?? boxes[0] ?? null;
+  return { user, profile: user, boxes, activeBox };
 }
 
 export async function getBoxData(boxId: string) {
-  const supabase = await supabaseServer();
-  const [{ data: vouchers }, { data: events }, { count }] = await Promise.all([
-    supabase.from("vouchers").select("*").eq("box_id", boxId).returns<Voucher[]>(),
-    supabase.from("voucher_events").select("*").eq("box_id", boxId).returns<VoucherEvent[]>(),
-    supabase.from("box_members").select("*", { count: "exact", head: true }).eq("box_id", boxId),
+  const [vouchers, events, count] = await Promise.all([
+    query<Voucher>("select * from vouchers where box_id = $1", [boxId]),
+    query<VoucherEvent>("select * from voucher_events where box_id = $1", [boxId]),
+    one<{ n: number }>("select count(*) as n from box_members where box_id = $1", [boxId]),
   ]);
-  return { vouchers: vouchers ?? [], events: events ?? [], memberCount: count ?? 1 };
+  return { vouchers, events, memberCount: count?.n ?? 1 };
+}
+
+/** Gutschein laden – nur wenn der Nutzer Mitglied der Kiste ist */
+export async function getVoucher(id: string, userId: string): Promise<Voucher | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  return one<Voucher>(
+    "select v.* from vouchers v join box_members m on m.box_id = v.box_id and m.user_id = $2 where v.id = $1",
+    [id, userId]
+  );
 }

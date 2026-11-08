@@ -2,7 +2,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Camera, ImagePlus, PenLine, X } from "lucide-react";
-import { supabaseBrowser } from "@/lib/supabase/client";
+import { saveVoucher, type VoucherInput } from "@/lib/actions";
 import { compressImage } from "@/lib/image";
 import { CATEGORIES, REMINDER_OPTIONS, dateLabel, estimatedExpiry, todayISO } from "@/lib/vouchers";
 import type { Extraction, Voucher } from "@/lib/types";
@@ -151,42 +151,20 @@ export function VoucherForm({
     e.preventDefault();
     setSaving(true);
     setError(null);
-    const supabase = supabaseBrowser();
-    const id = voucher?.id ?? crypto.randomUUID();
-    const num = (s: string) => (s.trim() === "" ? null : Number(s.replace(",", ".")));
-    const value = num(form.value);
-
-    let photo_path = voucher?.photo_path ?? null;
-    if (photo) {
-      const path = `${boxId}/${id}-${Date.now()}.jpg`;
-      const { error: upErr } = await supabase.storage.from("voucher-photos").upload(path, photo.blob, { contentType: "image/jpeg" });
-      if (upErr) {
-        setError("Foto konnte nicht hochgeladen werden: " + upErr.message);
-        setSaving(false);
-        return;
-      }
-      if (voucher?.photo_path) await supabase.storage.from("voucher-photos").remove([voucher.photo_path]);
-      photo_path = path;
-    }
-
-    const clean = (s: string) => (s.trim() === "" ? null : s.trim());
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    const row = {
-      box_id: voucher?.box_id ?? boxId,
+    const num = (v: string) => (v.trim() === "" ? null : Number(v.replace(",", ".")));
+    const clean = (v: string) => (v.trim() === "" ? null : v.trim());
+    const input: VoucherInput = {
       issuer: form.issuer.trim(),
       title: clean(form.title),
       category: form.category,
-      value,
-      remaining_value: isEdit ? (form.remaining_value.trim() === "" ? value : num(form.remaining_value)) : value,
+      value: num(form.value),
+      remaining_value: isEdit ? num(form.remaining_value) : null,
       currency: form.currency || "EUR",
       code: clean(form.code),
       pin: clean(form.pin),
       reference: clean(form.reference),
-      expires_on: form.no_date ? estimate : clean(form.expires_on),
-      expiry_estimated: form.no_date,
+      expires_on: form.no_date ? null : clean(form.expires_on),
+      no_date: form.no_date,
       received_on: clean(form.received_on),
       gifted_by: clean(form.gifted_by),
       occasion: clean(form.occasion),
@@ -195,21 +173,26 @@ export function VoucherForm({
       phone: clean(form.phone),
       conditions: clean(form.conditions),
       notes: clean(form.notes),
-      reminder_days: [...form.reminder_days].sort((a, b) => b - a),
-      photo_path,
+      reminder_days: form.reminder_days,
     };
+    const fd = new FormData();
+    fd.set("data", JSON.stringify(input));
+    fd.set("box_id", boxId);
+    if (voucher) fd.set("id", voucher.id);
+    if (photo) fd.set("photo", photo.blob, "gutschein.jpg");
 
-    const { error: dbErr } = isEdit
-      ? await supabase.from("vouchers").update(row).eq("id", id)
-      : await supabase.from("vouchers").insert({ ...row, id, created_by: user?.id });
-
-    if (dbErr) {
-      setError("Speichern hat nicht geklappt: " + dbErr.message);
+    try {
+      const res = await saveVoucher(fd);
+      if (res.error || !res.id) {
+        setError(res.error ?? "Speichern hat nicht geklappt.");
+        setSaving(false);
+        return;
+      }
+      router.push(`/gutschein/${res.id}${isEdit ? "" : "?neu=1"}`);
+    } catch {
+      setError("Speichern hat nicht geklappt. Ist das Foto vielleicht zu groß?");
       setSaving(false);
-      return;
     }
-    router.push(`/gutschein/${id}${isEdit ? "" : "?neu=1"}`);
-    router.refresh();
   }
 
   if (step === "capture") {

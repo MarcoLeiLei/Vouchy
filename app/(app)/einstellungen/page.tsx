@@ -1,21 +1,22 @@
 import { headers } from "next/headers";
 import { getContext } from "@/lib/data";
-import { createBox, renameBox } from "./actions";
+import { createBox, logout, renameBox } from "@/lib/actions";
+import { query } from "@/lib/db";
+import { emailEnabled, vapidKeys } from "@/lib/notify";
 import { BoxSwitcher, InviteButton, LeaveBox, MemberRow, NameField, NotificationSettings, CalendarSubscribe } from "./client";
 
 export default async function SettingsPage() {
-  const { supabase, user, profile, boxes, activeBox } = await getContext();
-  const { data: memberRows } = activeBox
-    ? await supabase.from("box_members").select("user_id, role").eq("box_id", activeBox.id).order("joined_at")
-    : { data: [] as { user_id: string; role: string }[] };
-  const memberIds = (memberRows ?? []).map((m) => m.user_id);
-  const { data: memberProfiles } = memberIds.length
-    ? await supabase.from("profiles").select("id, display_name, email").in("id", memberIds)
-    : { data: [] as { id: string; display_name: string | null; email: string | null }[] };
-  const members = (memberRows ?? []).map((m) => ({ ...m, profile: (memberProfiles ?? []).find((p) => p.id === m.user_id) ?? null }));
+  const { user, profile, boxes, activeBox } = await getContext();
+  const members = activeBox
+    ? await query<{ user_id: string; role: string; display_name: string | null; email: string }>(
+        "select m.user_id, m.role, u.display_name, u.email from box_members m join users u on u.id = m.user_id where m.box_id = $1 order by m.joined_at",
+        [activeBox.id]
+      )
+    : [];
+  const vapid = await vapidKeys();
 
   const h = await headers();
-  const origin = process.env.NEXT_PUBLIC_APP_URL || `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
+  const origin = `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
   const isOwner = activeBox?.owner_id === user.id;
 
   return (
@@ -44,13 +45,12 @@ export default async function SettingsPage() {
               <p className="font-bold mb-2">Wer ist mit drin?</p>
               <ul className="space-y-2">
                 {members.map((m) => {
-                  const p = m.profile;
                   return (
                     <MemberRow
                       key={m.user_id}
                       boxId={activeBox.id}
                       userId={m.user_id}
-                      name={p?.display_name || p?.email || "Unbekannt"}
+                      name={m.display_name || m.email}
                       role={m.role}
                       isMe={m.user_id === user.id}
                       canRemove={isOwner && m.user_id !== user.id}
@@ -76,16 +76,16 @@ export default async function SettingsPage() {
 
       <Section title="Erinnerungen">
         <NotificationSettings
-          vapidKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? ""}
+          vapidKey={vapid.publicKey}
           notifyPush={profile?.notify_push ?? true}
           notifyEmail={profile?.notify_email ?? false}
-          emailAvailable={Boolean(process.env.RESEND_API_KEY)}
+          emailAvailable={emailEnabled()}
           defaultDays={profile?.default_reminder_days ?? [90, 30, 7]}
         />
         {profile && <CalendarSubscribe url={`${origin}/api/calendar/${profile.calendar_token}.ics`} />}
       </Section>
 
-      <form action="/auth/signout" method="post">
+      <form action={logout}>
         <button className="press w-full rounded-2xl bg-white border-2 border-line py-4 font-bold">Abmelden</button>
       </form>
     </div>

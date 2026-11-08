@@ -1,8 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabaseBrowser } from "@/lib/supabase/client";
-import { switchBox } from "@/app/(app)/einstellungen/actions";
+import { acceptInvite } from "@/lib/actions";
 
 export function JoinButton({ token }: { token: string }) {
   const router = useRouter();
@@ -14,13 +13,12 @@ export function JoinButton({ token }: { token: string }) {
         disabled={busy}
         onClick={async () => {
           setBusy(true);
-          const { data, error } = await supabaseBrowser().rpc("accept_invite", { p_token: token });
+          const { error } = await acceptInvite(token);
           if (error) {
-            setError("Beitreten hat nicht geklappt. Ist der Link noch gültig?");
+            setError(error);
             setBusy(false);
             return;
           }
-          await switchBox(data as string);
           router.push("/");
           router.refresh();
         }}

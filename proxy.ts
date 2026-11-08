@@ -1,47 +1,26 @@
-import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/einladung", "/api/calendar", "/api/cron", "/setup"];
+const PUBLIC_PATHS = ["/login", "/einladung", "/api/calendar", "/api/cron", "/setup"];
 
-export async function proxy(request: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const hasDb = Boolean(process.env.DATABASE_URL || process.env.POSTGRES_URL);
 
-  if (!url || !key) {
+  if (!hasDb) {
     if (pathname.startsWith("/setup") || pathname.startsWith("/api")) return NextResponse.next();
     return NextResponse.redirect(new URL("/setup", request.url));
   }
 
-  let response = NextResponse.next({ request });
-  const supabase = createServerClient(url, key, {
-    cookies: {
-      getAll: () => request.cookies.getAll(),
-      setAll: (list) => {
-        list.forEach(({ name, value }) => request.cookies.set(name, value));
-        response = NextResponse.next({ request });
-        list.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
-      },
-    },
-  });
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const loggedIn = Boolean(request.cookies.get("vouchy_session")?.value);
   const isPublic = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
-  if (!user && !isPublic) {
-    if (pathname.startsWith("/api")) {
-      return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
-    }
+
+  if (!loggedIn && !isPublic) {
+    if (pathname.startsWith("/api")) return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
     const login = new URL("/login", request.url);
     if (pathname !== "/") login.searchParams.set("next", pathname);
     return NextResponse.redirect(login);
   }
-  if (user && pathname === "/login") {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-  return response;
+  return NextResponse.next();
 }
 
 export const config = {

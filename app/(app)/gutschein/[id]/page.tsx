@@ -1,11 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, Globe, MapPin, Phone } from "lucide-react";
-import { supabaseServer } from "@/lib/supabase/server";
-import { getBoxData } from "@/lib/data";
+import { requireUser } from "@/lib/auth";
+import { getBoxData, getVoucher } from "@/lib/data";
 import { computeBadges } from "@/lib/gamification";
 import { category, countdownLabel, dateLabel, daysLeft, effectiveStatus, money, openValue, todayISO, urgency } from "@/lib/vouchers";
-import type { Voucher } from "@/lib/types";
 import { VoucherActions } from "./voucher-actions";
 import { NewVoucherWelcome } from "./welcome";
 import { BadgeWatcher } from "@/components/badge-watcher";
@@ -21,18 +20,11 @@ const URGENCY_PILL: Record<string, string> = {
 
 export default async function VoucherPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ neu?: string }> }) {
   const [{ id }, { neu }] = await Promise.all([params, searchParams]);
-  const supabase = await supabaseServer();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const { data: voucher } = await supabase.from("vouchers").select("*").eq("id", id).single<Voucher>();
+  const user = await requireUser();
+  const voucher = await getVoucher(id, user.id);
   if (!voucher) notFound();
-
-  const [{ data: signed }, box, { data: profile }] = await Promise.all([
-    voucher.photo_path ? supabase.storage.from("voucher-photos").createSignedUrl(voucher.photo_path, 3600) : Promise.resolve({ data: null }),
-    getBoxData(voucher.box_id),
-    supabase.from("profiles").select("display_name").eq("id", user?.id ?? "").maybeSingle<{ display_name: string | null }>(),
-  ]);
+  const box = await getBoxData(voucher.box_id);
+  const profile = user;
   const badges = computeBadges(box.vouchers, box.events, box.memberCount);
 
   const cat = category(voucher.category);
@@ -144,12 +136,12 @@ export default async function VoucherPage({ params, searchParams }: { params: Pr
         </section>
       )}
 
-      {signed?.signedUrl && (
+      {voucher.has_photo && (
         <section className="mt-8">
           <h2 className="display text-2xl mb-3">Original</h2>
-          <a href={signed.signedUrl} target="_blank" rel="noreferrer" className="block">
+          <a href={`/api/photo/${voucher.id}?v=${encodeURIComponent(voucher.updated_at)}`} target="_blank" rel="noreferrer" className="block">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={signed.signedUrl} alt={`Foto des Gutscheins von ${voucher.issuer}`} className="w-full rounded-2xl border-4 border-white shadow-[0_3px_0_#2b1b63]" />
+            <img src={`/api/photo/${voucher.id}?v=${encodeURIComponent(voucher.updated_at)}`} alt={`Foto des Gutscheins von ${voucher.issuer}`} className="w-full rounded-2xl border-4 border-white shadow-[0_3px_0_#2b1b63]" />
           </a>
         </section>
       )}
