@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-ink: #2b1b63;
+  --color-ink-soft: #5d5288;
+  --color-paper: #f4f1ff;
+  --color-card: #ffffff;
+  --color-line: #e3dcfb;
+  --color-pink: #ff4f8b;
+  --color-pink-deep: #e0336f;
+  --color-mint: #bdf2d5;
+  --color-butter: #ffe58a;
+  --color-sky: #c9deff;
+  --color-peach: #ffcdb8;
+  --color-lilac: #ddd0ff;
+  --color-danger: #f0432a;
+  --color-warn: #f5a300;
+  --color-ok: #17a36b;
+}
+
+:root {
+  --c-mint: var(--color-mint);
+  --c-butter: var(--color-butter);
+  --c-sky: var(--color-sky);
+  --c-peach: var(--color-peach);
+  --c-lilac: var(--color-lilac);
+  color-scheme: light;
+}
+
+html {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-weight: 430;
+  font-size: 16px;
+  line-height: 1.45;
+  min-height: 100dvh;
+}
+
+.display {
+  font-stretch: 80%;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 0.95;
+}
+
+:focus-visible {
+  outline: 3px solid var(--color-pink);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* ---------- Das Ticket: Kernelement von Vouchy ---------- */
+.ticket {
+  --stub: 92px;
+  --notch: 11px;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr var(--stub);
+  border-radius: 18px;
+  -webkit-mask:
+    radial-gradient(circle var(--notch) at calc(100% - var(--stub)) 0, #0000 98%, #000) top / 100% 51% no-repeat,
+    radial-gradient(circle var(--notch) at calc(100% - var(--stub)) 100%, #0000 98%, #000) bottom / 100% 51% no-repeat;
+  mask:
+    radial-gradient(circle var(--notch) at calc(100% - var(--stub)) 0, #0000 98%, #000) top / 100% 51% no-repeat,
+    radial-gradient(circle var(--notch) at calc(100% - var(--stub)) 100%, #0000 98%, #000) bottom / 100% 51% no-repeat;
+}
+.ticket-shadow {
+  filter: drop-shadow(0 2px 0 rgb(43 27 99 / 0.14));
+}
+.ticket-stub {
+  border-left: 2.5px dashed rgb(43 27 99 / 0.28);
+  margin: 12px 0;
+  padding: 0 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.ticket-big {
+  --stub: 0px;
+  grid-template-columns: 1fr;
+  -webkit-mask:
+    radial-gradient(circle 16px at 0 62%, #0000 98%, #000) left / 51% 100% no-repeat,
+    radial-gradient(circle 16px at 100% 62%, #0000 98%, #000) right / 51% 100% no-repeat;
+  mask:
+    radial-gradient(circle 16px at 0 62%, #0000 98%, #000) left / 51% 100% no-repeat,
+    radial-gradient(circle 16px at 100% 62%, #0000 98%, #000) right / 51% 100% no-repeat;
+}
+
+/* Kleine Freude beim Antippen – nur als Reaktion auf eine Aktion */
+.press {
+  transition: transform 120ms ease;
+}
+.press:active {
+  transform: scale(0.97);
+}
+
+@keyframes pop-in {
+  0% { transform: scale(0.6) rotate(-6deg); opacity: 0; }
+  70% { transform: scale(1.06) rotate(2deg); opacity: 1; }
+  100% { transform: scale(1) rotate(0); }
+}
+.pop-in { animation: pop-in 420ms cubic-bezier(.2,.9,.3,1.3) both; }
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+.scan-wiggle { animation: wiggle 1.2s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+input, select, textarea {
+  font: inherit;
+}
+.field {
+  width: 100%;
+  border-radius: 14px;
+  background: #fff;
+  border: 2px solid var(--color-line);
+  padding: 12px 14px;
+  color: var(--color-ink);
+  outline: none;
+}
+.field:focus {
+  border-color: var(--color-ink);
+}
+.field::placeholder {
+  color: #a59bc9;
+}
