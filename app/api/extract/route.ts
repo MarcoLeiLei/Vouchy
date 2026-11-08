@@ -3,7 +3,7 @@ import { currentUser } from "@/lib/auth";
 import { CATEGORIES, todayISO } from "@/lib/vouchers";
 import type { Extraction } from "@/lib/types";
 
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // Reihenfolge: eigenes Modell (GEMINI_MODEL), sonst kostenlose Flash-Modelle.
 // Ist eins überlastet, langsam oder nicht verfügbar, wird automatisch das nächste probiert.
@@ -18,8 +18,8 @@ const MODELS = [
   "gemini-2.5-flash-lite",
 ].filter(Boolean) as string[];
 
-const PER_MODEL_TIMEOUT = 15_000;
-const TOTAL_BUDGET = 50_000;
+const PER_MODEL_TIMEOUT = 45_000;
+const TOTAL_BUDGET = 105_000;
 
 const nullable = (type: string, description?: string) => ({ type, nullable: true, ...(description ? { description } : {}) });
 
@@ -57,57 +57,74 @@ export async function POST(request: NextRequest) {
   const { image, mediaType } = (await request.json()) as { image?: string; mediaType?: string };
   if (!image) return NextResponse.json({ error: "Kein Bild erhalten" }, { status: 400 });
 
-  const body = {
-    contents: [
-      {
-        parts: [
-          { inline_data: { mime_type: mediaType || "image/jpeg", data: image } },
-          {
-            text: `Lies diesen Gutschein aus (meist deutschsprachig). Heute ist der ${todayISO()}. Datumsangaben immer als YYYY-MM-DD. Ist die Gültigkeit relativ angegeben ("3 Jahre ab Ausstellung"), rechne sie mit dem Ausstellungsdatum aus. Erfinde nichts: Was nicht lesbar ist, ist null.`,
-          },
-        ],
-      },
-    ],
-    generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0 },
-  };
+  const prompt = `Lies diesen Gutschein aus (meist deutschsprachig). Heute ist der ${todayISO()}. Datumsangaben immer als YYYY-MM-DD. Ist die Gültigkeit relativ angegeben ("3 Jahre ab Ausstellung"), rechne sie mit dem Ausstellungsdatum aus. Erfinde nichts: Was nicht lesbar ist, ist null.`;
+
+  const makeBody = (withThinkingOff: boolean) => ({
+    contents: [{ parts: [{ inline_data: { mime_type: mediaType || "image/jpeg", data: image } }, { text: prompt }] }],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: SCHEMA,
+      temperature: 0,
+      // Nachdenken abschalten: fürs Abtippen unnötig und macht die Antwort viel langsamer
+      ...(withThinkingOff ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+    },
+  });
 
   const started = Date.now();
   let lastError = "";
   let quotaHit = false;
-  for (const model of [...new Set(MODELS)]) {
+  let badKey = false;
+
+  /** Ein Modell fragen. Liefert Daten oder wirft einen Fehler. */
+  async function ask(model: string, signal: AbortSignal): Promise<Extraction> {
+    let thinkingOff = true;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key! },
+        body: JSON.stringify(makeBody(thinkingOff)),
+        signal,
+      });
+      const json = await res.json().catch(() => null);
+      if (res.ok) {
+        const text: string = (json?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("");
+        return JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")) as Extraction;
+      }
+      const raw = JSON.stringify(json ?? {});
+      // Manche Modelle kennen die Denk-Einstellung nicht → einmal ohne probieren
+      if (res.status === 400 && thinkingOff && /thinking/i.test(raw)) {
+        thinkingOff = false;
+        continue;
+      }
+      if (res.status === 400 && /API key/i.test(raw)) badKey = true;
+      if (res.status === 429) quotaHit = true;
+      throw new Error(`${model}: ${res.status} ${raw.slice(0, 160)}`);
+    }
+    throw new Error(`${model}: keine Antwort`);
+  }
+
+  // Immer zwei Modelle gleichzeitig fragen – die erste brauchbare Antwort gewinnt
+  const models = [...new Set(MODELS)];
+  for (let i = 0; i < models.length; i += 2) {
     const remaining = TOTAL_BUDGET - (Date.now() - started);
-    if (remaining < 4_000) break;
+    if (remaining < 5_000 || badKey) break;
+    const pair = models.slice(i, i + 2);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), Math.min(PER_MODEL_TIMEOUT, remaining));
     try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        const raw = JSON.stringify(json ?? {});
-        console.error("gemini error", model, res.status, raw.slice(0, 300));
-        if (res.status === 400 && /API key/i.test(raw)) {
-          return NextResponse.json({ error: "Der Gemini API Key ist ungültig. Bitte in Vercel prüfen." }, { status: 502 });
-        }
-        if (res.status === 429) quotaHit = true;
-        lastError = `${model}: ${res.status}`;
-        continue; // 404 (Modell gibt's nicht), 429 (Kontingent), 5xx (überlastet) → nächstes Modell
-      }
-      const text: string = (json?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("");
-      const data = JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")) as Extraction;
+      const { data, model } = await Promise.any(pair.map((m) => ask(m, ctrl.signal).then((data) => ({ data, model: m }))));
       console.log("gemini ok", model, `${Date.now() - started}ms`);
       return NextResponse.json({ data, model });
     } catch (err) {
-      lastError = `${model}: ${(err as Error).name === "AbortError" ? "Zeitüberschreitung" : (err as Error).message}`;
-      console.error("gemini failed", lastError);
+      const errors = err instanceof AggregateError ? err.errors : [err];
+      lastError = errors.map((e) => ((e as Error).name === "AbortError" ? "Zeitüberschreitung" : (e as Error).message)).join(" | ");
+      console.error("gemini failed", pair.join("+"), lastError);
     } finally {
       clearTimeout(timer);
+      ctrl.abort(); // laufende Anfrage des langsameren Modells beenden
     }
   }
+  if (badKey) return NextResponse.json({ error: "Der Gemini API Key ist ungültig. Bitte in Vercel prüfen." }, { status: 502 });
   console.error("gemini gave up", lastError);
   return NextResponse.json(
     {

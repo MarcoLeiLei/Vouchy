@@ -1,7 +1,7 @@
 "use client";
 
 /** Verkleinert ein Foto auf max. 1600px und gibt JPEG-Blob + Base64 zurück. */
-export async function compressImage(file: File, maxSize = 1400, quality = 0.8): Promise<{ blob: Blob; base64: string; url: string }> {
+export async function compressImage(file: File, maxSize = 1280, quality = 0.8): Promise<{ blob: Blob; base64: string; url: string }> {
   const bitmap = await createImageBitmap(file).catch(async () => {
     // Fallback für ältere Safari-Versionen
     const img = new Image();

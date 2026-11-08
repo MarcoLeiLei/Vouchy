@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Camera, ImagePlus, PenLine, X } from "lucide-react";
 import { saveVoucher, type VoucherInput } from "@/lib/actions";
@@ -78,6 +78,12 @@ export function VoucherForm({
   const [aiFields, setAiFields] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (step !== "reading") return setSlow(false);
+    const t = setTimeout(() => setSlow(true), 12_000);
+    return () => clearTimeout(t);
+  }, [step]);
   const cameraRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
@@ -92,7 +98,7 @@ export function VoucherForm({
       if (isEdit) return; // beim Bearbeiten nur Foto austauschen
       setStep("reading");
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 58_000);
+      const timer = setTimeout(() => ctrl.abort(), 115_000);
       try {
         const res = await fetch("/api/extract", {
           method: "POST",
@@ -250,7 +256,10 @@ export function VoucherForm({
         )}
         <Mascot size={90} mood="wow" className="mx-auto mt-8 scan-wiggle" />
         <p className="display text-3xl mt-4">Vouchy liest…</p>
-        <p className="text-ink-soft mt-1">Aussteller, Wert, Code, Gültigkeit</p>
+        <p className="text-ink-soft mt-1">{slow ? "Dauert heute etwas länger, Gemini ist gerade gut besucht." : "Aussteller, Wert, Code, Gültigkeit"}</p>
+        <button type="button" onClick={() => { setAiNote("Du kannst die Daten direkt eintragen. Das Foto wird trotzdem gespeichert."); setStep("form"); }} className="mt-6 text-sm font-bold underline text-ink-soft">
+          Nicht warten, selbst eintragen
+        </button>
         <style>{`@keyframes scan { 0%,100% { top: 4% } 50% { top: 92% } }`}</style>
       </div>
     );
