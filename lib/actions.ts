@@ -208,12 +208,13 @@ export async function createBox(form: FormData) {
   const user = await requireUser();
   const name = String(form.get("name") ?? "").trim() || "Neue Kiste";
   const emoji = String(form.get("emoji") ?? "").trim() || "🎁";
-  const boxId = await tx(async (q) => {
-    const [b] = await q<{ id: string }>("insert into boxes (name, emoji, owner_id) values ($1,$2,$3) returning id", [name, emoji, user.id]);
-    await q("insert into box_members (box_id, user_id, role) values ($1,$2,'owner')", [b.id, user.id]);
-    return b.id;
-  });
-  await switchBox(boxId);
+  const row = await one<{ id: string }>(
+    `with b as (insert into boxes (name, emoji, owner_id) values ($1,$2,$3) returning id, owner_id),
+          m as (insert into box_members (box_id, user_id, role) select id, owner_id, 'owner' from b)
+     select id from b`,
+    [name, emoji, user.id]
+  );
+  await switchBox(row!.id);
 }
 
 export async function renameBox(form: FormData) {

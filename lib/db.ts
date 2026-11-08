@@ -7,7 +7,14 @@ pg.types.setTypeParser(1082, (v) => v); // date → "YYYY-MM-DD"
 pg.types.setTypeParser(1184, (v) => (v === null ? null : new Date(v).toISOString())); // timestamptz → ISO
 pg.types.setTypeParser(20, (v) => parseInt(v, 10)); // bigint (count) → number
 
-export const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || "";
+// Direkte (ungepoolte) Verbindung bevorzugen: Der Pooler von Neon kann zusammengehörige
+// Befehle auf verschiedene Verbindungen verteilen, dann funktionieren Transaktionen nicht.
+export const databaseUrl =
+  process.env.DATABASE_URL_UNPOOLED ||
+  process.env.POSTGRES_URL_NON_POOLING ||
+  process.env.DATABASE_URL ||
+  process.env.POSTGRES_URL ||
+  "";
 
 const globalForPg = globalThis as unknown as { vouchyPool?: pg.Pool; vouchySchema?: Promise<void> };
 

@@ -1,6 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { requireUser } from "./auth";
+import { ensureOwnBox, requireUser } from "./auth";
 import { one, query } from "./db";
 import type { Box, Voucher, VoucherEvent } from "./types";
 
@@ -8,10 +8,13 @@ export const BOX_COOKIE = "vouchy_box";
 
 export async function getContext() {
   const user = await requireUser();
-  const boxes = await query<Box>(
-    "select b.* from boxes b join box_members m on m.box_id = b.id where m.user_id = $1 order by b.created_at",
-    [user.id]
-  );
+  const loadBoxes = () =>
+    query<Box>("select b.* from boxes b join box_members m on m.box_id = b.id where m.user_id = $1 order by b.created_at", [user.id]);
+  let boxes = await loadBoxes();
+  if (boxes.length === 0) {
+    await ensureOwnBox(user.id);
+    boxes = await loadBoxes();
+  }
   const wanted = (await cookies()).get(BOX_COOKIE)?.value;
   const activeBox = boxes.find((b) => b.id === wanted) ?? boxes.find((b) => b.owner_id === user.id) ?? boxes[0] ?? null;
   return { user, profile: user, boxes, activeBox };

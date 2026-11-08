@@ -3,7 +3,7 @@ import { randomBytes, scrypt as _scrypt, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { one, query, tx } from "./db";
+import { one, query } from "./db";
 import type { Profile } from "./types";
 
 const scrypt = promisify(_scrypt) as (pw: string, salt: Buffer, len: number) => Promise<Buffer>;
@@ -63,15 +63,35 @@ export async function requireUser(): Promise<Profile> {
   return user;
 }
 
-/** Neuer Account inkl. eigener Kiste */
+/** Neuer Account inkl. eigener Kiste – ein einziger Befehl, damit nichts halb angelegt wird */
 export async function registerUser(email: string, password: string, name: string): Promise<string> {
   const hash = await hashPassword(password);
-  return tx(async (q) => {
-    const [u] = await q<{ id: string }>("insert into users (email, password_hash, display_name) values ($1, $2, $3) returning id", [email, hash, name || email.split("@")[0]]);
-    const [b] = await q<{ id: string }>("insert into boxes (name, owner_id) values ('Meine Kiste', $1) returning id", [u.id]);
-    await q("insert into box_members (box_id, user_id, role) values ($1, $2, 'owner')", [b.id, u.id]);
-    return u.id;
-  });
+  const row = await one<{ id: string }>(
+    `with u as (
+       insert into users (email, password_hash, display_name) values ($1, $2, $3) returning id
+     ), b as (
+       insert into boxes (name, owner_id) select 'Meine Kiste', id from u returning id, owner_id
+     ), m as (
+       insert into box_members (box_id, user_id, role) select id, owner_id, 'owner' from b
+     )
+     select id from u`,
+    [email, hash, name || email.split("@")[0]]
+  );
+  return row!.id;
+}
+
+/** Falls ein Konto (z. B. durch einen früheren Fehler) keine Kiste hat, eine anlegen */
+export async function ensureOwnBox(userId: string) {
+  await query(
+    `with b as (
+       insert into boxes (name, owner_id)
+       select 'Meine Kiste', $1::uuid
+       where not exists (select 1 from box_members where user_id = $1::uuid)
+       returning id, owner_id
+     )
+     insert into box_members (box_id, user_id, role) select id, owner_id, 'owner' from b`,
+    [userId]
+  );
 }
 
 export async function isMember(boxId: string, userId: string): Promise<boolean> {
