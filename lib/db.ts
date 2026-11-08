@@ -7,14 +7,33 @@ pg.types.setTypeParser(1082, (v) => v); // date → "YYYY-MM-DD"
 pg.types.setTypeParser(1184, (v) => (v === null ? null : new Date(v).toISOString())); // timestamptz → ISO
 pg.types.setTypeParser(20, (v) => parseInt(v, 10)); // bigint (count) → number
 
-// Direkte (ungepoolte) Verbindung bevorzugen: Der Pooler von Neon kann zusammengehörige
-// Befehle auf verschiedene Verbindungen verteilen, dann funktionieren Transaktionen nicht.
-export const databaseUrl =
-  process.env.DATABASE_URL_UNPOOLED ||
-  process.env.POSTGRES_URL_NON_POOLING ||
-  process.env.DATABASE_URL ||
-  process.env.POSTGRES_URL ||
-  "";
+/**
+ * Passende Verbindungs-URL wählen.
+ * - Neon: direkte (ungepoolte) URL bevorzugen, damit Transaktionen sicher funktionieren.
+ * - Supabase: Die direkte Adresse (db.<ref>.supabase.co) ist von Vercel aus oft nicht erreichbar (nur IPv6).
+ *   Stattdessen den Supabase-Pooler im Session-Modus (Port 5432) nutzen – der unterstützt Transaktionen.
+ */
+function pickDatabaseUrl(): string {
+  const env = process.env;
+  const pooled = env.DATABASE_URL || env.POSTGRES_URL || "";
+  const direct = env.DATABASE_URL_UNPOOLED || env.POSTGRES_URL_NON_POOLING || "";
+  const isSupabase = /supabase\.(co|com)/.test(pooled + direct);
+
+  if (isSupabase) {
+    for (const candidate of [direct, pooled]) {
+      if (!candidate) continue;
+      const u = new URL(candidate);
+      if (u.hostname.includes("pooler.supabase.com")) {
+        u.port = "5432"; // Session-Modus statt Transaction-Modus (6543)
+        return u.toString();
+      }
+    }
+    return direct || pooled;
+  }
+  return direct || pooled;
+}
+
+export const databaseUrl = pickDatabaseUrl();
 
 const globalForPg = globalThis as unknown as { vouchyPool?: pg.Pool; vouchySchema?: Promise<void> };
 
@@ -192,5 +211,19 @@ create table if not exists app_settings (
   key text primary key,
   value text not null
 );
+
+-- Sperrt den Zugriff über öffentliche Datenschnittstellen (z. B. die Supabase-API).
+-- Die App selbst verbindet sich als Eigentümer der Tabellen und ist davon nicht betroffen.
+alter table users enable row level security;
+alter table sessions enable row level security;
+alter table boxes enable row level security;
+alter table box_members enable row level security;
+alter table box_invites enable row level security;
+alter table vouchers enable row level security;
+alter table voucher_photos enable row level security;
+alter table voucher_events enable row level security;
+alter table push_subscriptions enable row level security;
+alter table reminder_log enable row level security;
+alter table app_settings enable row level security;
 commit;
 `;
