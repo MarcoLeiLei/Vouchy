@@ -9,8 +9,8 @@ export const maxDuration = 60;
 // Ist eins überlastet, langsam oder nicht verfügbar, wird automatisch das nächste probiert.
 const MODELS = [
   process.env.GEMINI_MODEL,
+  "gemini-flash-lite-latest", // schnell und im Test zuverlässig
   "gemini-flash-latest",
-  "gemini-flash-lite-latest",
   "gemini-3.8-flash",
   "gemini-3.6-flash",
   "gemini-3.5-flash-lite",
@@ -18,7 +18,7 @@ const MODELS = [
   "gemini-2.5-flash-lite",
 ].filter(Boolean) as string[];
 
-const PER_MODEL_TIMEOUT = 20_000;
+const PER_MODEL_TIMEOUT = 15_000;
 const TOTAL_BUDGET = 50_000;
 
 const nullable = (type: string, description?: string) => ({ type, nullable: true, ...(description ? { description } : {}) });
