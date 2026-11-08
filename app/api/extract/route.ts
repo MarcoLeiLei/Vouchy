@@ -5,8 +5,21 @@ import type { Extraction } from "@/lib/types";
 
 export const maxDuration = 60;
 
-// Reihenfolge: eigenes Modell (GEMINI_MODEL), sonst aktuelle kostenlose Flash-Modelle
-const MODELS = [process.env.GEMINI_MODEL, "gemini-flash-latest", "gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash"].filter(Boolean) as string[];
+// Reihenfolge: eigenes Modell (GEMINI_MODEL), sonst kostenlose Flash-Modelle.
+// Ist eins überlastet, langsam oder nicht verfügbar, wird automatisch das nächste probiert.
+const MODELS = [
+  process.env.GEMINI_MODEL,
+  "gemini-flash-latest",
+  "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
+  "gemini-3.6-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+].filter(Boolean) as string[];
+
+const PER_MODEL_TIMEOUT = 20_000;
+const TOTAL_BUDGET = 50_000;
 
 const nullable = (type: string, description?: string) => ({ type, nullable: true, ...(description ? { description } : {}) });
 
@@ -58,36 +71,50 @@ export async function POST(request: NextRequest) {
     generationConfig: { responseMimeType: "application/json", responseSchema: SCHEMA, temperature: 0 },
   };
 
+  const started = Date.now();
   let lastError = "";
-  for (const model of MODELS) {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify(body),
-    });
-    if (res.status === 404) {
-      lastError = `Modell ${model} nicht verfügbar`;
-      continue; // nächstes Modell probieren
-    }
-    const json = await res.json().catch(() => null);
-    if (!res.ok) {
-      console.error("gemini error", model, res.status, JSON.stringify(json));
-      const msg =
-        res.status === 400 && /API key/i.test(JSON.stringify(json))
-          ? "Der Gemini API Key ist ungültig."
-          : res.status === 429
-            ? "Das kostenlose Gemini-Kontingent ist gerade aufgebraucht. Versuch es in einer Minute nochmal oder trag die Daten von Hand ein."
-            : "Das Foto konnte nicht ausgelesen werden. Trag die Daten einfach von Hand ein.";
-      return NextResponse.json({ error: msg }, { status: 502 });
-    }
+  let quotaHit = false;
+  for (const model of [...new Set(MODELS)]) {
+    const remaining = TOTAL_BUDGET - (Date.now() - started);
+    if (remaining < 4_000) break;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), Math.min(PER_MODEL_TIMEOUT, remaining));
     try {
-      const text: string = json.candidates[0].content.parts.map((p: { text?: string }) => p.text ?? "").join("");
-      return NextResponse.json({ data: JSON.parse(text) as Extraction, model });
-    } catch {
-      lastError = "Antwort nicht lesbar";
-      break;
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok) {
+        const raw = JSON.stringify(json ?? {});
+        console.error("gemini error", model, res.status, raw.slice(0, 300));
+        if (res.status === 400 && /API key/i.test(raw)) {
+          return NextResponse.json({ error: "Der Gemini API Key ist ungültig. Bitte in Vercel prüfen." }, { status: 502 });
+        }
+        if (res.status === 429) quotaHit = true;
+        lastError = `${model}: ${res.status}`;
+        continue; // 404 (Modell gibt's nicht), 429 (Kontingent), 5xx (überlastet) → nächstes Modell
+      }
+      const text: string = (json?.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("");
+      const data = JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")) as Extraction;
+      console.log("gemini ok", model, `${Date.now() - started}ms`);
+      return NextResponse.json({ data, model });
+    } catch (err) {
+      lastError = `${model}: ${(err as Error).name === "AbortError" ? "Zeitüberschreitung" : (err as Error).message}`;
+      console.error("gemini failed", lastError);
+    } finally {
+      clearTimeout(timer);
     }
   }
-  console.error("gemini failed", lastError);
-  return NextResponse.json({ error: "Das Foto konnte nicht ausgelesen werden. Trag die Daten einfach von Hand ein." }, { status: 502 });
+  console.error("gemini gave up", lastError);
+  return NextResponse.json(
+    {
+      error: quotaHit
+        ? "Das kostenlose Gemini-Kontingent ist gerade aufgebraucht. Trag die Daten von Hand ein oder versuch es später nochmal."
+        : "Gemini ist gerade überlastet. Trag die Daten von Hand ein oder versuch es in ein paar Minuten nochmal.",
+    },
+    { status: 503 }
+  );
 }

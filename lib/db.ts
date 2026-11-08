@@ -53,9 +53,6 @@ function pool(): pg.Pool {
     });
     // Alle Vouchy-Tabellen liegen im eigenen Schema "vouchy" – so gibt es keine
     // Überschneidung mit Tabellen, die schon in der Datenbank existieren.
-    globalForPg.vouchyPool.on("connect", (client) => {
-      client.query("set search_path to vouchy, public").catch(() => {});
-    });
   }
   return globalForPg.vouchyPool;
 }
@@ -74,10 +71,27 @@ function ensureSchema(): Promise<void> {
   return globalForPg.vouchySchema;
 }
 
+type Prepared = pg.PoolClient & { vouchyReady?: boolean };
+
+/** Verbindung holen und einmalig auf das Schema "vouchy" einstellen */
+async function getClient(): Promise<Prepared> {
+  const client = (await pool().connect()) as Prepared;
+  if (!client.vouchyReady) {
+    await client.query("set search_path to vouchy, public");
+    client.vouchyReady = true;
+  }
+  return client;
+}
+
 export async function query<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T[]> {
   await ensureSchema();
-  const res = await pool().query(text, params);
-  return res.rows as T[];
+  const client = await getClient();
+  try {
+    const res = await client.query(text, params);
+    return res.rows as T[];
+  } finally {
+    client.release();
+  }
 }
 
 export async function one<T = Record<string, unknown>>(text: string, params: unknown[] = []): Promise<T | null> {
@@ -88,7 +102,7 @@ export async function one<T = Record<string, unknown>>(text: string, params: unk
 /** Mehrere Statements in einer Transaktion */
 export async function tx<T>(fn: (q: <R = Record<string, unknown>>(text: string, params?: unknown[]) => Promise<R[]>) => Promise<T>): Promise<T> {
   await ensureSchema();
-  const client = await pool().connect();
+  const client = await getClient();
   try {
     await client.query("begin");
     const result = await fn(async (text, params = []) => (await client.query(text, params)).rows);

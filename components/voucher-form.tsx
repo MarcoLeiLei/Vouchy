@@ -91,19 +91,30 @@ export function VoucherForm({
       setPhoto({ blob: img.blob, url: img.url });
       if (isEdit) return; // beim Bearbeiten nur Foto austauschen
       setStep("reading");
-      const res = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: img.base64, mediaType: "image/jpeg" }),
-      });
-      const json = (await res.json()) as { data?: Extraction; error?: string };
-      if (!res.ok || !json.data) {
-        setAiNote(json.error ?? "Das hat nicht geklappt. Trag die Daten einfach selbst ein.");
-      } else {
-        applyExtraction(json.data);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 58_000);
+      try {
+        const res = await fetch("/api/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: img.base64, mediaType: "image/jpeg" }),
+          signal: ctrl.signal,
+        });
+        const json = (await res.json().catch(() => ({}))) as { data?: Extraction; error?: string };
+        if (!res.ok || !json.data) {
+          setAiNote(json.error ?? "Das Auslesen hat nicht geklappt. Trag die Daten einfach selbst ein. Das Foto wird trotzdem gespeichert.");
+        } else {
+          applyExtraction(json.data);
+        }
+      } finally {
+        clearTimeout(timer);
       }
     } catch (e) {
-      setAiNote(e instanceof Error ? e.message : "Foto konnte nicht gelesen werden.");
+      setAiNote(
+        e instanceof Error && e.name === "AbortError"
+          ? "Das Auslesen dauert gerade zu lange. Trag die Daten einfach selbst ein. Das Foto wird trotzdem gespeichert."
+          : "Das Foto konnte nicht gelesen werden. Trag die Daten einfach selbst ein."
+      );
     }
     setStep("form");
   }
