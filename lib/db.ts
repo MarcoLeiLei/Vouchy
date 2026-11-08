@@ -15,8 +15,13 @@ function pool(): pg.Pool {
   if (!databaseUrl) throw new Error("Keine Datenbank verbunden (DATABASE_URL fehlt).");
   if (!globalForPg.vouchyPool) {
     const local = /localhost|127\.0\.0\.1/.test(databaseUrl);
+    // SSL-Parameter aus der URL entfernen: pg würde "sslmode=require" sonst als strenge
+    // Zertifikatsprüfung auslegen, die mit der Zertifikatskette von Neon fehlschlägt.
+    // Die Verbindung bleibt verschlüsselt (ssl unten).
+    const url = new URL(databaseUrl);
+    ["sslmode", "sslrootcert", "sslcert", "sslkey", "uselibpqcompat", "channel_binding"].forEach((p) => url.searchParams.delete(p));
     globalForPg.vouchyPool = new pg.Pool({
-      connectionString: databaseUrl,
+      connectionString: url.toString(),
       max: 3,
       ssl: local ? false : { rejectUnauthorized: false },
     });
