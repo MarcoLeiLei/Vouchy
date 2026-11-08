@@ -59,14 +59,16 @@ export async function POST(request: NextRequest) {
 
   const prompt = `Lies diesen Gutschein aus (meist deutschsprachig). Heute ist der ${todayISO()}. Datumsangaben immer als YYYY-MM-DD. Ist die Gültigkeit relativ angegeben ("3 Jahre ab Ausstellung"), rechne sie mit dem Ausstellungsdatum aus. Erfinde nichts: Was nicht lesbar ist, ist null.`;
 
-  const makeBody = (withThinkingOff: boolean) => ({
+  // tuned = schnellere Einstellungen (kein "Nachdenken", mittlere Bildauflösung).
+  // Lehnt ein Modell sie ab (400), wird automatisch ohne sie wiederholt.
+  const makeBody = (model: string, tuned: boolean) => ({
     contents: [{ parts: [{ inline_data: { mime_type: mediaType || "image/jpeg", data: image } }, { text: prompt }] }],
     generationConfig: {
       responseMimeType: "application/json",
       responseSchema: SCHEMA,
       temperature: 0,
-      // Nachdenken abschalten: fürs Abtippen unnötig und macht die Antwort viel langsamer
-      ...(withThinkingOff ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
+      ...(tuned ? { mediaResolution: "MEDIA_RESOLUTION_MEDIUM" } : {}),
+      ...(tuned && !model.includes("lite") ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
     },
   });
 
@@ -77,12 +79,12 @@ export async function POST(request: NextRequest) {
 
   /** Ein Modell fragen. Liefert Daten oder wirft einen Fehler. */
   async function ask(model: string, signal: AbortSignal): Promise<Extraction> {
-    let thinkingOff = true;
+    let tuned = true;
     for (let attempt = 0; attempt < 2; attempt++) {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": key! },
-        body: JSON.stringify(makeBody(thinkingOff)),
+        body: JSON.stringify(makeBody(model, tuned)),
         signal,
       });
       const json = await res.json().catch(() => null);
@@ -91,9 +93,9 @@ export async function POST(request: NextRequest) {
         return JSON.parse(text.replace(/^```json\s*|\s*```$/g, "")) as Extraction;
       }
       const raw = JSON.stringify(json ?? {});
-      // Manche Modelle kennen die Denk-Einstellung nicht → einmal ohne probieren
-      if (res.status === 400 && thinkingOff && /thinking/i.test(raw)) {
-        thinkingOff = false;
+      // Einstellung nicht unterstützt → einmal mit Standard-Einstellungen probieren
+      if (res.status === 400 && tuned && !/API key/i.test(raw)) {
+        tuned = false;
         continue;
       }
       if (res.status === 400 && /API key/i.test(raw)) badKey = true;
